@@ -1,0 +1,67 @@
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(cowplot)
+library(ggrepel)
+library(magrittr)
+library(RColorBrewer)
+library(shiny)
+library(plotly)
+library(stats)
+
+#Identifiants plotly
+
+Sys.setenv("plotly_username"="xxxx")
+Sys.setenv("plotly_api_key"="xxxx")
+
+#Récupération des données depuis l'URL stable de data.gouv (en refaisant tourner l'ensemble du code, la remise à jour en ligne est automatique)
+data_qot_fr <- read.csv("https://www.data.gouv.fr/fr/datasets/r/406c6a23-e283-4300-9484-54e78c8ae675", sep = ";")
+
+#Agréger les données en choisissant la ligne qui somme toutes les classes d'âge
+data_qot_fr <- filter(data_qot_fr, cl_age90 == 0)
+
+#Transformer la colonne "jour" en format Date
+data_qot_fr$jour <- as.Date(data_qot_fr$jour)
+
+#sélectionner seulement a partir du 1 septembre
+data_qot_fr<- data_qot_fr[data_qot_fr$jour >= "2020-09-01",]
+
+#sélectionner juste 2A et 2B
+data_qot_fr <- data_qot_fr %>%
+  filter(grepl("2[A-B]", dep))
+
+#Suppression ligne classes d'page
+data_qot_fr$cl_age90 <- NULL
+
+#Avec une boucle on génère successivement les régressions loess et les graphes pour chaque département
+for (i in dep_fr){
+  dataset <- filter(data_qot_fr, 
+                    dep == i)
+                    
+  #On calcule les lissages à part 
+  smooth_vals = predict(loess(P~as.numeric(jour), dataset, span = 0.2))
+  
+  #On les intègre dans le dataset provisoire
+  dataset$smooth <- smooth_vals
+  
+  #Avec plotly on génère un graphique interactif
+  ay <- list(
+    tickfont = list(color = "red"),
+    overlaying = "y",
+    side = "right",
+    title = "Nombre de tests"
+  )
+  
+  #On code le graphique
+  loop_plot <- plot_ly(dataset, x = ~jour, y = ~smooth, type = "scatter", mode = "lines", name = "Nombre de cas positifs")%>% 
+    #On va rajouter un deuxième axe des ordonnées pour les tests
+    add_trace(data_qot_2a, x = ~jour, y = ~T, type = "bar", yaxis = "y2", alpha = 0.2, name = "Nombre de tests") %>%
+    layout(
+      title = paste("Nombre de cas (lissé) et nombre de tests", i),
+      yaxis = list(title = "Nombre de cas positifs quotidiens (lissage loess)"),
+      yaxis2 = ay
+    )
+    
+  #On l'envoie sur le server plotly, une fois intégré dans le code Wordpress avec un iframe, il se remet automatiquement à jour
+  api_create(loop_plot, filename = paste('tests et cas positifs', i))
+}
